@@ -25,6 +25,8 @@ def parse_arguments():
                       help="Maximum number of reviews per product to collect (default: 10)")
     parser.add_argument("--input-file", type=str,
                       help="Input CSV file with product links (if already scraped)")
+    parser.add_argument("--use-profile", action="store_true", 
+                      help="Use your existing Chrome profile with saved logins (default: False)")
     return parser.parse_args()
 
 def main():
@@ -37,12 +39,17 @@ def main():
     max_products = args.max_products
     max_reviews = args.max_reviews
     input_file = args.input_file
+    use_profile = args.use_profile
     
     print(f"Starting Amazon crawler with search term: '{search_term}'")
     print(f"Results will be saved to: {output_file}")
     
-    # Setup the WebDriver
-    driver = setup_driver()
+    # Setup the WebDriver with user profile if requested
+    if use_profile:
+        print("Using your existing Chrome profile with saved logins")
+        driver = setup_driver(use_profile=True)
+    else:
+        driver = setup_driver()
     
     try:
         # Initialize Amazon service
@@ -90,14 +97,19 @@ def main():
                 print(f"\nProcessing product {i+1}/{min(max_products, len(products))}")
                 print(f"Title: {product['title'][:50]}...")
                 
-                # Visit the product detail page
-                if not amazon_service.visit_product_details(product['link']):
-                    print("Failed to load product page. Skipping.")
-                    continue
+                # # Visit the product detail page
+                # if not amazon_service.visit_product_details(product['link']):
+                #     print("Failed to load product page. Skipping.")
+                #     continue
                 
-                # Navigate to reviews section
-                if not amazon_service.navigate_to_reviews():
-                    print("Failed to navigate to reviews section. Skipping.")
+                # # Navigate to reviews section
+                # if not amazon_service.navigate_to_reviews():
+                #     print("Failed to navigate to reviews section. Skipping.")
+                #     continue
+
+                # Navigate to comments using asin
+                if not amazon_service.navigate_to_reviews_by_asin(product['asin']):
+                    print("Failed to navigate to comments section. Skipping.")
                     continue
                 
                 # Extract review data
