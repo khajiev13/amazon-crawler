@@ -1,17 +1,14 @@
-#!/usr/bin/env python3
-"""
-Amazon Service Module
-Handles interaction with Amazon website using Selenium.
-"""
 from typing import Dict, List, Optional, Union
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementNotInteractableException
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.common.action_chains import ActionChains  # Add this import
 from utils.driver_utils import human_like_scroll
 import csv
+import time  # Add this import
 
 from utils.driver_utils import random_delay
 from utils.security_utils import handle_security_challenges
@@ -71,68 +68,142 @@ class AmazonService:
             return False
     
     def extract_product_data(self) -> List[Product]:
-        """Extract product titles and detail page links from the search results
+        """Extract product titles and detail page links from all available search result pages
         
         Returns:
-            List[Product]: A list of Product objects
+            List[Product]: A list of Product objects from all pages
         """
-        products = []
+        all_products = []
+        current_page = 1
         
         try:
-            # Wait for products to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.s-result-item"))
-            )
-            
-            # Find all product items
-            product_elements = self.driver.find_elements(By.CSS_SELECTOR, "div.s-result-item[data-component-type='s-search-result']")
-            
-            for product in product_elements:
-                try:
-                    # Extract ASIN directly from the data-asin attribute
-                    asin = product.get_attribute("data-asin")
-                    
-                    # Use the exact class combination from the Amazon page structure
-                    title_link_element = product.find_element(By.CSS_SELECTOR, 
-                        "a.a-link-normal.s-line-clamp-2.s-link-style.a-text-normal")
-                    
-                    # Extract title from the span inside h2
-                    title = title_link_element.find_element(By.CSS_SELECTOR, "span").text.strip()
-                    
-                    # Extract the full product link including redirect parameters
-                    link = title_link_element.get_attribute("href")
-                    
-                    # Only add products with both title, link and ASIN
-                    if title and link and asin:
-                        products.append(Product(title=title, link=link, asin=asin))
-                        print(f"Found product: {title[:50]}... (ASIN: {asin})")
+            while True:
+                print(f"Processing search results page {current_page}...")
                 
-                except NoSuchElementException:
-                    # Try alternative selector pattern that sometimes appears
+                # Wait for products to load
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.s-result-item"))
+                )
+                
+                # Find all product items on current page
+                product_elements = self.driver.find_elements(By.CSS_SELECTOR, "div.s-result-item[data-component-type='s-search-result']")
+                
+                products_on_page = 0
+                for product in product_elements:
                     try:
-                        # Still get the ASIN even with alternative pattern
+                        # Extract ASIN directly from the data-asin attribute
                         asin = product.get_attribute("data-asin")
                         
+                        # Use the exact class combination from the Amazon page structure
                         title_link_element = product.find_element(By.CSS_SELECTOR, 
-                            "a.a-link-normal.s-underline-text.s-underline-link-text.s-link-style.a-text-normal")
+                            "a.a-link-normal.s-line-clamp-2.s-link-style.a-text-normal")
                         
+                        # Extract title from the span inside h2
                         title = title_link_element.find_element(By.CSS_SELECTOR, "span").text.strip()
+                        
+                        # Extract the full product link including redirect parameters
                         link = title_link_element.get_attribute("href")
                         
+                        # Only add products with both title, link and ASIN
                         if title and link and asin:
-                            products.append(Product(title=title, link=link, asin=asin))
-                            print(f"Found product (alt pattern): {title[:50]}... (ASIN: {asin})")
+                            all_products.append(Product(title=title, link=link, asin=asin))
+                            products_on_page += 1
+                            print(f"Found product: {title[:50]}... (ASIN: {asin})")
+                    
+                    except NoSuchElementException:
+                        # Try alternative selector pattern that sometimes appears
+                        try:
+                            # Still get the ASIN even with alternative pattern
+                            asin = product.get_attribute("data-asin")
+                            
+                            title_link_element = product.find_element(By.CSS_SELECTOR, 
+                                "a.a-link-normal.s-underline-text.s-underline-link-text.s-link-style.a-text-normal")
+                            
+                            title = title_link_element.find_element(By.CSS_SELECTOR, "span").text.strip()
+                            link = title_link_element.get_attribute("href")
+                            
+                            if title and link and asin:
+                                all_products.append(Product(title=title, link=link, asin=asin))
+                                products_on_page += 1
+                                print(f"Found product (alt pattern): {title[:50]}... (ASIN: {asin})")
+                        except Exception as e:
+                            print(f"Could not find product data with alternative pattern: {e}")
+                    
                     except Exception as e:
-                        print(f"Could not find product data with alternative pattern: {e}")
+                        print(f"Error extracting product data: {e}")
+                        continue
                 
+                print(f"Extracted {products_on_page} products from page {current_page}")
+                
+                # Check if there's a next page button
+                try:
+                    # Look for the next page button using Amazon's pagination selector
+                    next_buttons = self.driver.find_elements(By.CSS_SELECTOR, 
+                        "a.s-pagination-item.s-pagination-next")
+                    
+                    # Alternative XPath as suggested in the prompt
+                    if not next_buttons:
+                        next_buttons = self.driver.find_elements(By.XPATH, 
+                            "//a[@class='s-pagination-item s-pagination-next s-pagination-button s-pagination-separator']")
+                    
+                    # If no next button or it has 's-pagination-disabled' class, we've reached the last page
+                    if not next_buttons or "s-pagination-disabled" in next_buttons[0].get_attribute("class"):
+                        print(f"Reached the last page ({current_page}). No more products to extract.")
+                        break
+                    
+                    next_button = next_buttons[0]
+                    
+                    # Scroll to the next button
+                    print(f"Found next page button. Scrolling to it...")
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
+                        next_button
+                    )
+                    random_delay(0.5, 1.0)
+                    
+                    # Highlight the button briefly for visual feedback
+                    self.driver.execute_script("""
+                        var originalStyle = arguments[0].getAttribute('style');
+                        arguments[0].setAttribute('style', 'border: 2px solid red; background: yellow;');
+                        setTimeout(function() {
+                            arguments[0].setAttribute('style', originalStyle);
+                        }, 500);
+                    """, next_button)
+                    random_delay(0.5, 1.0)
+                    
+                    # Move to the element with a natural motion
+                    actions = ActionChains(self.driver)
+                    actions.move_to_element(next_button)
+                    actions.pause(0.3)
+                    actions.perform()
+                    
+                    # Click the next button
+                    print(f"Navigating to page {current_page + 1}...")
+                    next_button.click()
+                    
+                    # Wait for the new page to load
+                    random_delay(2.0, 4.0)
+                    
+                    # Handle any security challenges that might appear
+                    if handle_security_challenges(self.driver):
+                        print("Security challenge handled after pagination, continuing...")
+                        random_delay(1.0, 2.0)
+                    
+                    current_page += 1
+                    
+                except (NoSuchElementException, ElementNotInteractableException) as e:
+                    print(f"No more pages available: {e}")
+                    break
                 except Exception as e:
-                    print(f"Error extracting product data: {e}")
-                    continue
-        
+                    print(f"Error navigating to next page: {e}")
+                    break
+            
+            print(f"Completed extraction of {len(all_products)} products from {current_page} pages")
+            return all_products
+            
         except Exception as e:
             print(f"Error finding product elements: {e}")
-        
-        return products
+            return all_products
     
     
     def visit_product_details(self, product_link: str) -> bool:
@@ -257,19 +328,20 @@ class AmazonService:
             print(f"Error navigating to reviews: {e}")
             return False
             
-    def navigate_to_reviews_by_asin(self, asin: str) -> bool:
-        """Navigate directly to a product's reviews page using its ASIN
+    def navigate_to_reviews_by_asin(self, asin: str, page: int = 1) -> bool:
+        """Navigate directly to a product's reviews page using its ASIN and page number
         
         Args:
             asin: Amazon Standard Identification Number
+            page: Page number of reviews (default: 1)
             
         Returns:
             bool: True if successfully navigated to reviews
         """
         try:
-            # Construct direct URL to reviews page
-            reviews_url = f"https://www.amazon.com/product-reviews/{asin}"
-            print(f"Navigating directly to reviews using ASIN: {asin}")
+            # Construct direct URL to reviews page with sorting and pagination
+            reviews_url = f"https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}"
+            print(f"Navigating directly to reviews page {page} using ASIN: {asin}")
             self.driver.get(reviews_url)
             random_delay(2.0, 4.0)
             
@@ -301,8 +373,8 @@ class AmazonService:
         except Exception as e:
             print(f"Error navigating to reviews by ASIN: {e}")
             return False
-
-    def extract_reviews(self, max_reviews: int = None) -> List[Review]:
+            
+    def extract_reviews(self, max_reviews: int = None, comments_in_last_n_days:int = None) -> List[Review]:
         """Extract review data from all review pages
         
         Args:
@@ -316,17 +388,14 @@ class AmazonService:
         
         try:
             print("Extracting review data from all pages...")
-            
             while True:
                 print(f"Processing review page {current_page}...")
-                
                 # Look for review elements with multiple selector options
                 review_selectors = [
                     "li[data-hook='review'][role='listitem']",
                     "div[data-hook='review']",
                     "li[class*='review'][data-hook='review']"
                 ]
-
                 review_elements = []
                 for selector in review_selectors:
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
@@ -334,7 +403,6 @@ class AmazonService:
                         print(f"Found {len(elements)} reviews with selector: {selector}")
                         review_elements = elements
                         break
-
                 if not review_elements:
                     print("No review elements found using any selector pattern")
                 
@@ -424,7 +492,7 @@ class AmazonService:
                             review_data["text"] = body_element.text.strip()
                         except:
                             review_data["text"] = "N/A"
-
+                        
                         # Extract review images if present
                         try:
                             # Look for review images
@@ -478,14 +546,12 @@ class AmazonService:
                         print(f"  Customer: {review_obj.customer_name} | Country: {review_obj.country} | Rating: {review_obj.rating}")
                         if review_obj.images:
                             print(f"  Images: {len(review_obj.images)} found")
-                        
                         all_reviews.append(review_obj)
                         
                         # If we reached the maximum number of reviews, stop
                         if max_reviews is not None and len(all_reviews) >= max_reviews:
                             print(f"Reached maximum number of reviews: {max_reviews}")
                             return all_reviews
-                            
                     except Exception as e:
                         print(f"Error extracting individual review data: {e}")
                         continue
@@ -494,18 +560,16 @@ class AmazonService:
                 if not self._has_next_page():
                     print(f"No more review pages found after page {current_page}")
                     break
-                    
+                
                 # Go to the next page
                 print(f"Navigating to the next page of reviews...")
                 if not self._go_to_next_page():
                     print(f"Failed to navigate to next page after page {current_page}")
                     break
-                    
                 current_page += 1
                 random_delay(2.0, 3.0)  # Delay between pages
             
             print(f"Collected a total of {len(all_reviews)} reviews from {current_page} pages")
-            
         except Exception as e:
             print(f"Error extracting review data: {e}")
         
@@ -522,27 +586,45 @@ class AmazonService:
             pagination = self.driver.find_elements(By.CSS_SELECTOR, "ul.a-pagination")
             if not pagination:
                 return False
-                
+            
             # Look for the "Next page" button that's not disabled
             next_buttons = self.driver.find_elements(By.CSS_SELECTOR, "li.a-last")
             if not next_buttons:
                 return False
-                
+            
             # If the next button has class "a-disabled", there's no next page
             return "a-disabled" not in next_buttons[0].get_attribute("class")
         except Exception as e:
             print(f"Error checking for next page: {e}")
             return False
-        
+    
     def _go_to_next_page(self) -> bool:
-        """Navigate to the next page of reviews
+        """Navigate to the next page of reviews using direct URL
         
         Returns:
             bool: True if successfully navigated to the next page
         """
         try:
-            next_button = self.driver.find_element(By.CSS_SELECTOR, "li.a-last a")
-            next_button.click()
+            # Get current URL
+            current_url = self.driver.current_url
+            
+            # Extract current page number
+            current_page = 1
+            if "pageNumber=" in current_url:
+                current_page = int(current_url.split("pageNumber=")[1].split("&")[0])
+            
+            # Construct URL for the next page
+            next_page = current_page + 1
+            next_url = current_url.replace(f"pageNumber={current_page}", f"pageNumber={next_page}")
+            if "pageNumber=" not in next_url:
+                # Add page parameter if not present
+                if "?" in next_url:
+                    next_url += f"&pageNumber={next_page}"
+                else:
+                    next_url += f"?pageNumber={next_page}"
+            
+            print(f"Navigating directly to page {next_page} using URL")
+            self.driver.get(next_url)
             
             # Wait for the new page to load
             WebDriverWait(self.driver, 10).until(
@@ -574,8 +656,8 @@ class AmazonService:
                 print(f"No reviews to save for {product_title}")
                 return
                 
-            # Convert reviews to dict for CSV writing
-            reviews_dict = [review.dict(exclude={'images'}) for review in reviews]
+            # Convert reviews to dict for CSV writing using model_dump instead of dict
+            reviews_dict = [review.model_dump(exclude={'images'}) for review in reviews]
             # Add image URLs as comma-separated string
             for i, review in enumerate(reviews):
                 reviews_dict[i]['image_urls'] = ','.join([img.full_size_url for img in review.images]) if review.images else ''
@@ -588,7 +670,7 @@ class AmazonService:
                 writer.writerow(review)
         
         print(f"Reviews saved to {product_filename}")
-    
+
     def _handle_login(self, email="raxmon1710@gmail.com", password="7191710r") -> bool:
         """Handle Amazon login process when prompted
         
@@ -601,7 +683,6 @@ class AmazonService:
         """
         try:
             print("Login form detected. Attempting to sign in...")
-            
             # Enter email
             email_field = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "ap_email"))
@@ -637,10 +718,8 @@ class AmazonService:
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.ID, "cm_cr-review_list"))
             )
-            
             print("Successfully logged in and loaded reviews")
             return True
-            
         except Exception as e:
             print(f"Error during login process: {e}")
             return False
@@ -660,14 +739,13 @@ class AmazonService:
                 writer.writeheader()
                 print(f"Empty product list. Created {filename} with headers only.")
                 return
-                
+            
             # Handle first product to determine field names
             first_product = products[0]
-            
             # Convert first product to dict if it's a Pydantic model
             first_dict = first_product.model_dump()
             fieldnames = first_dict.keys()
-                
+            
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             

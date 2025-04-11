@@ -17,9 +17,12 @@ def handle_security_challenges(driver: WebDriver) -> bool:
         bool: True if a security challenge was detected and handled, False otherwise
     """
     try:
-        # Check for CAPTCHA or security verification
+        # More specific check for security challenges
         security_elements = driver.find_elements(By.XPATH, 
-            "//*[contains(text(), 'CAPTCHA') or contains(text(), 'robot') or contains(text(), 'verification') or contains(text(), 'unusual activity')]")
+            "//form[contains(@action, 'captcha') or contains(@action, 'verification')] | " +
+            "//h4[contains(text(), 'CAPTCHA') or contains(text(), 'robot') or contains(text(), 'verification')] | " +
+            "//div[@id='captchacharacters'] | " +
+            "//img[contains(@src, 'captcha')]")
         
         if security_elements:
             print("Security challenge detected! Please solve it manually.")
@@ -30,7 +33,7 @@ def handle_security_challenges(driver: WebDriver) -> bool:
         captcha_input = driver.find_elements(By.ID, "captchacharacters")
         if captcha_input:
             print("CAPTCHA image detected! Please solve it manually.")
-            input("Press Enter once you've solved the CAPTCHA...")
+            captcha_input = input("Please enter the CAPTCHA text (or press Enter once solved): ")
             return True
             
     except Exception as e:

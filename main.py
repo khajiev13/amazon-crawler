@@ -9,6 +9,9 @@ import os
 from typing import Any, Dict, List
 from utils.driver_utils import setup_driver, random_delay, human_like_scroll
 from services.amazon_service import AmazonService
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver import Keys
+import time
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -21,12 +24,14 @@ def parse_arguments():
                       help="Scrape product reviews (default: False)")
     parser.add_argument("--max-products", type=int, default=5,
                       help="Maximum number of products to process for reviews (default: 5)")
-    parser.add_argument("--max-reviews", type=int, default=10,
+    parser.add_argument("--max-reviews", type=int,
                       help="Maximum number of reviews per product to collect (default: 10)")
     parser.add_argument("--input-file", type=str,
                       help="Input CSV file with product links (if already scraped)")
     parser.add_argument("--use-profile", action="store_true", 
                       help="Use your existing Chrome profile with saved logins (default: False)")
+    parser.add_argument("--comments-in-last-n-days", type=int,
+                      help="Number of days to consider for comments")
     return parser.parse_args()
 
 def main():
@@ -40,9 +45,9 @@ def main():
     max_reviews = args.max_reviews
     input_file = args.input_file
     use_profile = args.use_profile
+    comments_in_last_n_days = args.comments_in_last_n_days
     
-    print(f"Starting Amazon crawler with search term: '{search_term}'")
-    print(f"Results will be saved to: {output_file}")
+    
     
     # Setup the WebDriver with user profile if requested
     if use_profile:
@@ -64,6 +69,8 @@ def main():
                 products = list(reader)
             print(f"Loaded {len(products)} products from CSV")
         else:
+            print(f"Starting Amazon crawler with search term: '{search_term}'")
+            print(f"Results will be saved to: {output_file}")
             # Navigate to Amazon and perform search
             if not amazon_service.perform_search(search_term):
                 print("Failed to perform search. Exiting.")
@@ -71,9 +78,6 @@ def main():
             
             random_delay()
             
-            # Scroll like a human to load more products
-            print("Scrolling through page...")
-            human_like_scroll(driver)
             
             # Extract product data
             print("Extracting product data...")
@@ -113,7 +117,7 @@ def main():
                     continue
                 
                 # Extract review data
-                reviews = amazon_service.extract_reviews(max_reviews)
+                reviews = amazon_service.extract_reviews(max_reviews,comments_in_last_n_days)
                 print(f"Extracted {len(reviews)} reviews")
                 
                 # Save reviews to CSV
