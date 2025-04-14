@@ -9,63 +9,74 @@ from selenium.webdriver.common.action_chains import ActionChains  # Add this imp
 from utils.driver_utils import human_like_scroll
 import csv
 import time  # Add this import
+import logging
 
 from utils.driver_utils import random_delay
 from utils.security_utils import handle_security_challenges
 from py_models.amazon_models import Review, Product, ReviewImage
 
+# Configure module logger
+logger = logging.getLogger(__name__)
+
 class AmazonService:
     def __init__(self, driver: WebDriver) -> None:
         self.driver = driver
     
-    def perform_search(self, search_term: str) -> bool:
+    def perform_search(self, search_term: str, max_retries: int = 3) -> bool:
         """Navigate to Amazon homepage and perform a search like a human
         
         Args:
             search_term: The search term to enter in Amazon search
+            max_retries: Maximum number of retries on failure
             
         Returns:
             bool: True if search was successful, False otherwise
         """
-        try:
-            print("Navigating to Amazon homepage...")
-            self.driver.get("https://www.amazon.com/")
-            random_delay(2.0, 4.0)
-            
-            # Handle any initial security challenges
-            if handle_security_challenges(self.driver):
-                print("Initial security challenge handled, continuing...")
-            
-            print(f"Searching for '{search_term}'...")
-            
-            # Wait for search box to be present
-            search_box = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "twotabsearchtextbox"))
-            )
-            
-            # Clear any existing text
-            search_box.clear()
-            
-            # Type search term with random delays between characters
-            for char in search_term:
-                search_box.send_keys(char)
-                random_delay(0.05, 0.2)  # Short delay between keypresses
-            
-            random_delay(0.5, 1.5)  # Pause before hitting enter
-            
-            # Submit the search
-            search_box.send_keys(Keys.RETURN)
-            
-            # Wait for search results to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.s-result-item"))
-            )
-            
-            return True
-        
-        except Exception as e:
-            print(f"Error performing search: {e}")
-            return False
+        retries = 0
+        while retries < max_retries:
+            try:
+                logger.info(f"Searching attempt {retries + 1} for '{search_term}'...")
+                self.driver.get("https://www.amazon.com/")
+                random_delay(2.0, 4.0)
+                
+                # Handle any initial security challenges
+                if handle_security_challenges(self.driver):
+                    logger.info("Initial security challenge handled, continuing...")
+                
+                # Wait for search box to be present
+                search_box = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "twotabsearchtextbox"))
+                )
+                
+                # Clear any existing text
+                search_box.clear()
+                
+                # Type search term with random delays between characters
+                for char in search_term:
+                    search_box.send_keys(char)
+                    random_delay(0.05, 0.2)  # Short delay between keypresses
+                
+                random_delay(0.5, 1.5)  # Pause before hitting enter
+                
+                # Submit the search
+                search_box.send_keys(Keys.RETURN)
+                
+                # Wait for search results to load
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.s-result-item"))
+                )
+                
+                return True
+                
+            except Exception as e:
+                retries += 1
+                logger.warning(f"Search attempt {retries} failed: {e}")
+                if retries >= max_retries:
+                    logger.error(f"Error performing search after {max_retries} attempts: {e}")
+                    return False
+                
+                # Wait before retrying
+                random_delay(1.0, 2.0)
     
     def extract_product_data(self) -> List[Product]:
         """Extract product titles and detail page links from all available search result pages
@@ -78,7 +89,7 @@ class AmazonService:
         
         try:
             while True:
-                print(f"Processing search results page {current_page}...")
+                logger.info(f"Processing search results page {current_page}...")
                 
                 # Wait for products to load
                 WebDriverWait(self.driver, 10).until(
@@ -108,7 +119,7 @@ class AmazonService:
                         if title and link and asin:
                             all_products.append(Product(title=title, link=link, asin=asin))
                             products_on_page += 1
-                            print(f"Found product: {title[:50]}... (ASIN: {asin})")
+                            logger.info(f"Found product: {title[:50]}... (ASIN: {asin})")
                     
                     except NoSuchElementException:
                         # Try alternative selector pattern that sometimes appears
@@ -125,15 +136,15 @@ class AmazonService:
                             if title and link and asin:
                                 all_products.append(Product(title=title, link=link, asin=asin))
                                 products_on_page += 1
-                                print(f"Found product (alt pattern): {title[:50]}... (ASIN: {asin})")
+                                logger.info(f"Found product (alt pattern): {title[:50]}... (ASIN: {asin})")
                         except Exception as e:
-                            print(f"Could not find product data with alternative pattern: {e}")
+                            logger.warning(f"Could not find product data with alternative pattern: {e}")
                     
                     except Exception as e:
-                        print(f"Error extracting product data: {e}")
+                        logger.error(f"Error extracting product data: {e}")
                         continue
                 
-                print(f"Extracted {products_on_page} products from page {current_page}")
+                logger.info(f"Extracted {products_on_page} products from page {current_page}")
                 
                 # Check if there's a next page button
                 try:
@@ -148,13 +159,13 @@ class AmazonService:
                     
                     # If no next button or it has 's-pagination-disabled' class, we've reached the last page
                     if not next_buttons or "s-pagination-disabled" in next_buttons[0].get_attribute("class"):
-                        print(f"Reached the last page ({current_page}). No more products to extract.")
+                        logger.info(f"Reached the last page ({current_page}). No more products to extract.")
                         break
                     
                     next_button = next_buttons[0]
                     
                     # Scroll to the next button
-                    print(f"Found next page button. Scrolling to it...")
+                    logger.info("Found next page button. Scrolling to it...")
                     self.driver.execute_script(
                         "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
                         next_button
@@ -178,7 +189,7 @@ class AmazonService:
                     actions.perform()
                     
                     # Click the next button
-                    print(f"Navigating to page {current_page + 1}...")
+                    logger.info(f"Navigating to page {current_page + 1}...")
                     next_button.click()
                     
                     # Wait for the new page to load
@@ -186,23 +197,23 @@ class AmazonService:
                     
                     # Handle any security challenges that might appear
                     if handle_security_challenges(self.driver):
-                        print("Security challenge handled after pagination, continuing...")
+                        logger.info("Security challenge handled after pagination, continuing...")
                         random_delay(1.0, 2.0)
                     
                     current_page += 1
                     
                 except (NoSuchElementException, ElementNotInteractableException) as e:
-                    print(f"No more pages available: {e}")
+                    logger.warning(f"No more pages available: {e}")
                     break
                 except Exception as e:
-                    print(f"Error navigating to next page: {e}")
+                    logger.error(f"Error navigating to next page: {e}")
                     break
             
-            print(f"Completed extraction of {len(all_products)} products from {current_page} pages")
+            logger.info(f"Completed extraction of {len(all_products)} products from {current_page} pages")
             return all_products
             
         except Exception as e:
-            print(f"Error finding product elements: {e}")
+            logger.error(f"Error finding product elements: {e}")
             return all_products
     
     
@@ -216,13 +227,13 @@ class AmazonService:
             bool: True if successfully navigated to the page
         """
         try:
-            print(f"Visiting product page: {product_link[:60]}...")
+            logger.info(f"Visiting product page: {product_link[:60]}...")
             self.driver.get(product_link)
             random_delay(2.0, 4.0)
             
             # Handle any security challenges that might appear
             if handle_security_challenges(self.driver):
-                print("Security challenge handled on product page, continuing...")
+                logger.info("Security challenge handled on product page, continuing...")
                 random_delay(1.0, 2.0)
             
             # Wait for the page to load completely
@@ -233,7 +244,7 @@ class AmazonService:
             return True
         
         except Exception as e:
-            print(f"Error visiting product detail page: {e}")
+            logger.error(f"Error visiting product detail page: {e}")
             return False
     
     def navigate_to_reviews(self) -> bool:
@@ -244,7 +255,7 @@ class AmazonService:
         """
         try:
             # First try to find and click the "See all reviews" link
-            print("Looking for reviews link...")
+            logger.info("Looking for reviews link...")
             
             # Scroll down to make review elements visible
             human_like_scroll(self.driver)
@@ -264,7 +275,7 @@ class AmazonService:
                     if review_links:
                         for link in review_links:
                             if any(keyword in link.text.lower() for keyword in ["review", "see more", "see all"]):
-                                print(f"Found reviews link: '{link.text}'. Clicking...")
+                                logger.info(f"Found reviews link: '{link.text}'. Clicking...")
                                 # Scroll to the element first
                                 self.driver.execute_script("arguments[0].scrollIntoView(true);", link)
                                 random_delay(0.5, 1.5)
@@ -286,11 +297,11 @@ class AmazonService:
                                     # If we're here, the reviews loaded without login
                                     return True
                                 except:
-                                    print("Neither reviews nor login form found after clicking")
+                                    logger.warning("Neither reviews nor login form found after clicking")
                 except:
                     continue
             
-            print("Couldn't find a reviews link. Trying direct URL approach...")
+            logger.info("Couldn't find a reviews link. Trying direct URL approach...")
             
             # If we can't find a link, try modifying the URL directly
             current_url = self.driver.current_url
@@ -298,7 +309,7 @@ class AmazonService:
                 # Extract the product ID
                 product_id = current_url.split("/dp/")[1].split("/")[0]
                 reviews_url = f"https://www.amazon.com/product-reviews/{product_id}"
-                print(f"Navigating directly to reviews URL: {reviews_url}")
+                logger.info(f"Navigating directly to reviews URL: {reviews_url}")
                 self.driver.get(reviews_url)
                 random_delay(2.0, 3.0)
                 
@@ -319,13 +330,13 @@ class AmazonService:
                     # If we're here, the reviews loaded without login
                     return True
                 except:
-                    print("Failed to load reviews page via direct URL")
+                    logger.warning("Failed to load reviews page via direct URL")
             
-            print("Could not navigate to reviews section")
+            logger.warning("Could not navigate to reviews section")
             return False
         
         except Exception as e:
-            print(f"Error navigating to reviews: {e}")
+            logger.error(f"Error navigating to reviews: {e}")
             return False
             
     def navigate_to_reviews_by_asin(self, asin: str, page: int = 1) -> bool:
@@ -341,13 +352,13 @@ class AmazonService:
         try:
             # Construct direct URL to reviews page with sorting and pagination
             reviews_url = f"https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}"
-            print(f"Navigating directly to reviews page {page} using ASIN: {asin}")
+            logger.info(f"Navigating directly to reviews page {page} using ASIN: {asin}")
             self.driver.get(reviews_url)
             random_delay(2.0, 4.0)
             
             # Handle any security challenges that might appear
             if handle_security_challenges(self.driver):
-                print("Security challenge handled on reviews page, continuing...")
+                logger.info("Security challenge handled on reviews page, continuing...")
                 random_delay(1.0, 2.0)
                 
             # Wait for either reviews page or login form
@@ -367,11 +378,11 @@ class AmazonService:
                 return True
                 
             except TimeoutException:
-                print("Neither reviews nor login form found after navigation")
+                logger.warning("Neither reviews nor login form found after navigation")
                 return False
                 
         except Exception as e:
-            print(f"Error navigating to reviews by ASIN: {e}")
+            logger.error(f"Error navigating to reviews by ASIN: {e}")
             return False
             
     def extract_reviews(self, max_reviews: int = None, comments_in_last_n_days:int = None) -> List[Review]:
@@ -387,9 +398,9 @@ class AmazonService:
         current_page = 1
         
         try:
-            print("Extracting review data from all pages...")
+            logger.info("Extracting review data from all pages...")
             while True:
-                print(f"Processing review page {current_page}...")
+                logger.info(f"Processing review page {current_page}...")
                 # Look for review elements with multiple selector options
                 review_selectors = [
                     "li[data-hook='review'][role='listitem']",
@@ -400,11 +411,11 @@ class AmazonService:
                 for selector in review_selectors:
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     if elements:
-                        print(f"Found {len(elements)} reviews with selector: {selector}")
+                        logger.info(f"Found {len(elements)} reviews with selector: {selector}")
                         review_elements = elements
                         break
                 if not review_elements:
-                    print("No review elements found using any selector pattern")
+                    logger.warning("No review elements found using any selector pattern")
                 
                 # Process reviews on the current page
                 for review in review_elements:
@@ -542,36 +553,36 @@ class AmazonService:
                         
                         # Create a Review object and append to the list
                         review_obj = Review(**review_data)
-                        print(f"Extracted review: '{review_obj.title[:30]}...'")
-                        print(f"  Customer: {review_obj.customer_name} | Country: {review_obj.country} | Rating: {review_obj.rating}")
+                        logger.info(f"Extracted review: '{review_obj.title[:30]}...'")
+                        logger.info(f"  Customer: {review_obj.customer_name} | Country: {review_obj.country} | Rating: {review_obj.rating}")
                         if review_obj.images:
-                            print(f"  Images: {len(review_obj.images)} found")
+                            logger.info(f"  Images: {len(review_obj.images)} found")
                         all_reviews.append(review_obj)
                         
                         # If we reached the maximum number of reviews, stop
                         if max_reviews is not None and len(all_reviews) >= max_reviews:
-                            print(f"Reached maximum number of reviews: {max_reviews}")
+                            logger.info(f"Reached maximum number of reviews: {max_reviews}")
                             return all_reviews
                     except Exception as e:
-                        print(f"Error extracting individual review data: {e}")
+                        logger.error(f"Error extracting individual review data: {e}")
                         continue
                 
                 # Check if there's a next page
                 if not self._has_next_page():
-                    print(f"No more review pages found after page {current_page}")
+                    logger.info(f"No more review pages found after page {current_page}")
                     break
                 
                 # Go to the next page
-                print(f"Navigating to the next page of reviews...")
+                logger.info(f"Navigating to the next page of reviews...")
                 if not self._go_to_next_page():
-                    print(f"Failed to navigate to next page after page {current_page}")
+                    logger.warning(f"Failed to navigate to next page after page {current_page}")
                     break
                 current_page += 1
                 random_delay(2.0, 3.0)  # Delay between pages
             
-            print(f"Collected a total of {len(all_reviews)} reviews from {current_page} pages")
+            logger.info(f"Collected a total of {len(all_reviews)} reviews from {current_page} pages")
         except Exception as e:
-            print(f"Error extracting review data: {e}")
+            logger.error(f"Error extracting review data: {e}")
         
         return all_reviews
     
@@ -595,7 +606,7 @@ class AmazonService:
             # If the next button has class "a-disabled", there's no next page
             return "a-disabled" not in next_buttons[0].get_attribute("class")
         except Exception as e:
-            print(f"Error checking for next page: {e}")
+            logger.error(f"Error checking for next page: {e}")
             return False
     
     def _go_to_next_page(self) -> bool:
@@ -623,7 +634,7 @@ class AmazonService:
                 else:
                     next_url += f"?pageNumber={next_page}"
             
-            print(f"Navigating directly to page {next_page} using URL")
+            logger.info(f"Navigating directly to page {next_page} using URL")
             self.driver.get(next_url)
             
             # Wait for the new page to load
@@ -632,7 +643,7 @@ class AmazonService:
             )
             return True
         except Exception as e:
-            print(f"Error navigating to next page: {e}")
+            logger.error(f"Error navigating to next page: {e}")
             return False
 
     def save_reviews_to_csv(self, product_title: str, reviews: List[Review], 
@@ -653,7 +664,7 @@ class AmazonService:
         
         with open(product_filename, 'w', newline='', encoding='utf-8') as csvfile:
             if not reviews:
-                print(f"No reviews to save for {product_title}")
+                logger.warning(f"No reviews to save for {product_title}")
                 return
                 
             # Convert reviews to dict for CSV writing using model_dump instead of dict
@@ -669,7 +680,7 @@ class AmazonService:
             for review in reviews_dict:
                 writer.writerow(review)
         
-        print(f"Reviews saved to {product_filename}")
+        logger.info(f"Reviews saved to {product_filename}")
 
     def _handle_login(self, email="raxmon1710@gmail.com", password="7191710r") -> bool:
         """Handle Amazon login process when prompted
@@ -682,7 +693,7 @@ class AmazonService:
             bool: True if login successful and reviews loaded
         """
         try:
-            print("Login form detected. Attempting to sign in...")
+            logger.info("Login form detected. Attempting to sign in...")
             # Enter email
             email_field = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "ap_email"))
@@ -718,10 +729,10 @@ class AmazonService:
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.ID, "cm_cr-review_list"))
             )
-            print("Successfully logged in and loaded reviews")
+            logger.info("Successfully logged in and loaded reviews")
             return True
         except Exception as e:
-            print(f"Error during login process: {e}")
+            logger.error(f"Error during login process: {e}")
             return False
 
     @staticmethod
@@ -737,7 +748,7 @@ class AmazonService:
             if not products:
                 writer = csv.DictWriter(csvfile, fieldnames=['title', 'link', 'asin'])
                 writer.writeheader()
-                print(f"Empty product list. Created {filename} with headers only.")
+                logger.warning(f"Empty product list. Created {filename} with headers only.")
                 return
             
             # Handle first product to determine field names
@@ -754,4 +765,199 @@ class AmazonService:
                 # Convert to dict if it's a Pydantic model
                 writer.writerow(product.model_dump())
         
-        print(f"Data saved to {filename}")
+        logger.info(f"Data saved to {filename}")
+
+    def filter_products_by_os(self, products: List[Product], os_keyword: str = "roku") -> List[Product]:
+        """Filter products based on their operating system information
+        
+        Args:
+            products: List of Product objects to filter
+            os_keyword: Keyword to filter operating systems (default: "roku")
+            
+        Returns:
+            List[Product]: Filtered list of products with matching operating system
+        """
+        logger.info(f"Filtering products by operating system keyword: '{os_keyword}'")
+        validated_products: List[Product] = []
+        total_products: int = len(products)
+        
+        # Process each product
+        for i, product in enumerate(products):
+            logger.info(f"Checking product {i+1}/{total_products}: {product.title[:50]}...")
+            
+            if not self.visit_product_details(product.link):
+                logger.warning(f"Could not visit product page for: {product.title[:30]}... Skipping.")
+                continue
+            
+            try:
+                # Wait for page to load
+                random_delay(1.0, 2.0)
+                
+                is_matching_os: bool = False
+                
+                # First attempt: Check for system section in the expandable sections
+                is_matching_os = self._check_system_expandable_section(product, os_keyword)
+                
+                # Second attempt: Look for operating system in product comparison tables
+                if not is_matching_os:
+                    is_matching_os = self._check_comparison_tables(product, os_keyword)
+                
+                # Third attempt: Look for operating system in specification tables
+                if not is_matching_os:
+                    is_matching_os = self._check_specification_tables(product, os_keyword)
+                
+                # Add product to validated list if OS matches
+                if is_matching_os:
+                    validated_products.append(product)
+                else:
+                    logger.info(f"Product is NOT a {os_keyword.capitalize()} TV, skipping: {product.title[:30]}...")
+                
+            except Exception as e:
+                logger.warning(f"Error checking if product matches OS criteria: {e}")
+        
+        logger.info(f"Filtering complete: {len(validated_products)}/{total_products} products have {os_keyword.capitalize()} OS")
+        return validated_products
+    
+    def _check_system_expandable_section(self, product: Product, os_keyword: str) -> bool:
+        """Check for operating system in expandable system sections
+        
+        Args:
+            product: Product object to check
+            os_keyword: Keyword to match in operating system
+            
+        Returns:
+            bool: True if operating system matches keyword
+        """
+        try:
+            # Find system section by looking for the heading
+            system_headings = self.driver.find_elements(
+                By.XPATH, 
+                "//span[contains(@class, 'a-expander-prompt') and contains(text(), 'System')]"
+            )
+            
+            if system_headings:
+                # Find the parent container that holds the system information
+                for heading in system_headings:
+                    try:
+                        # Navigate to the expanded content section
+                        section = heading.find_element(By.XPATH, "./ancestor::div[contains(@class, 'a-expander-container')]")
+                        
+                        # Look for operating system row
+                        os_rows = section.find_elements(
+                            By.XPATH,
+                            ".//tr[.//th[contains(text(), 'Operating System')]]"
+                        )
+                        
+                        if os_rows:
+                            # Get the OS value (in the td element)
+                            os_value = os_rows[0].find_element(By.TAG_NAME, "td").text.strip()
+                            logger.info(f"Found Operating System: {os_value} for product: {product.title[:30]}...")
+                            
+                            # Check if OS contains the keyword
+                            if os_keyword.lower() in os_value.lower():
+                                logger.info(f"Product is a {os_keyword.capitalize()} TV: {product.title[:30]}...")
+                                return True
+                    except Exception as e:
+                        logger.warning(f"Error checking system details in section: {e}")
+        except Exception as e:
+            logger.warning(f"Error finding system expandable sections: {e}")
+        
+        return False
+    
+    def _check_comparison_tables(self, product: Product, os_keyword: str) -> bool:
+        """Check for operating system in product comparison tables
+        
+        Args:
+            product: Product object to check
+            os_keyword: Keyword to match in operating system
+            
+        Returns:
+            bool: True if operating system matches keyword
+        """
+        try:
+            # Look for rows with "operating system" in product comparison tables
+            os_rows = self.driver.find_elements(
+                By.XPATH,
+                "//tr[.//span[contains(text(), 'operating system')]]"
+            )
+            
+            if os_rows:
+                for row in os_rows:
+                    try:
+                        # Find all td elements in the row
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        
+                        for cell in cells:
+                            try:
+                                # Look for spans that contain text within the cell
+                                value_spans = cell.find_elements(
+                                    By.XPATH, 
+                                    ".//span[contains(@class, 'a-color-base')]"
+                                )
+                                
+                                for span in value_spans:
+                                    os_value = span.text.strip()
+                                    if os_value and os_value != "—":  # Skip empty or dash values
+                                        logger.info(f"Found Operating System in comparison table: {os_value} for product: {product.title[:30]}...")
+                                        
+                                        # Check if OS contains the keyword
+                                        if os_keyword.lower() in os_value.lower():
+                                            logger.info(f"Product is a {os_keyword.capitalize()} TV (from comparison table): {product.title[:30]}...")
+                                            return True
+                            except Exception as e:
+                                logger.warning(f"Error reading OS value from span: {e}")
+                    except Exception as e:
+                        logger.warning(f"Error processing cells in OS row: {e}")
+            else:
+                logger.info(f"No operating system found in comparison tables for: {product.title[:30]}...")
+        except Exception as e:
+            logger.warning(f"Error checking comparison tables for OS: {e}")
+        
+        return False
+    
+    def _check_specification_tables(self, product: Product, os_keyword: str) -> bool:
+        """Check for operating system in specification tables
+        
+        Args:
+            product: Product object to check
+            os_keyword: Keyword to match in operating system
+            
+        Returns:
+            bool: True if operating system matches keyword
+        """
+        try:
+            # Look for tables with specification details
+            spec_tables = self.driver.find_elements(
+                By.XPATH,
+                "//table[contains(@class, 'prodDetTable')]"
+            )
+            
+            for table in spec_tables:
+                try:
+                    # Find rows that mention "operating system"
+                    os_rows = table.find_elements(
+                        By.XPATH,
+                        ".//tr[.//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'operating system')]]"
+                    )
+                    
+                    if os_rows:
+                        for row in os_rows:
+                            try:
+                                # Get the value cell
+                                value_cell = row.find_element(By.XPATH, ".//td")
+                                os_value = value_cell.text.strip()
+                                
+                                logger.info(f"Found Operating System in spec table: {os_value} for product: {product.title[:30]}...")
+                                
+                                # Check if OS contains the keyword
+                                if os_keyword.lower() in os_value.lower():
+                                    logger.info(f"Product is a {os_keyword.capitalize()} TV (from spec table): {product.title[:30]}...")
+                                    return True
+                            except Exception as e:
+                                logger.warning(f"Error reading OS value from spec row: {e}")
+                except Exception as e:
+                    logger.warning(f"Error processing rows in spec table: {e}")
+        except Exception as e:
+            logger.warning(f"Error checking spec tables for OS: {e}")
+        
+        return False
