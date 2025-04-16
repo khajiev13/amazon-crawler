@@ -7,8 +7,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.common.action_chains import ActionChains  # Add this import
 from utils.driver_utils import human_like_scroll
+from utils.timing_utils import print_timing
 import csv
-import time  # Add this import
 import logging
 
 from utils.driver_utils import random_delay
@@ -229,7 +229,7 @@ class AmazonService:
         try:
             logger.info(f"Visiting product page: {product_link[:60]}...")
             self.driver.get(product_link)
-            random_delay(2.0, 4.0)
+            # random_delay(1.0, 3.0)
             
             # Handle any security challenges that might appear
             if handle_security_challenges(self.driver):
@@ -766,7 +766,7 @@ class AmazonService:
                 writer.writerow(product.model_dump())
         
         logger.info(f"Data saved to {filename}")
-
+    @print_timing
     def filter_products_by_os(self, products: List[Product], os_keyword: str = "roku") -> List[Product]:
         """Filter products based on their operating system information
         
@@ -791,7 +791,7 @@ class AmazonService:
             
             try:
                 # Wait for page to load
-                random_delay(1.0, 2.0)
+                random_delay(0.1, 1.0)
                 
                 is_matching_os: bool = False
                 
@@ -818,6 +818,7 @@ class AmazonService:
         logger.info(f"Filtering complete: {len(validated_products)}/{total_products} products have {os_keyword.capitalize()} OS")
         return validated_products
     
+    @print_timing
     def _check_system_expandable_section(self, product: Product, os_keyword: str) -> bool:
         """Check for operating system in expandable system sections
         
@@ -857,6 +858,8 @@ class AmazonService:
                             if os_keyword.lower() in os_value.lower():
                                 logger.info(f"Product is a {os_keyword.capitalize()} TV: {product.title[:30]}...")
                                 return True
+                            else:
+                                logger.info(f"Product is NOT a {os_keyword.capitalize()}: {product.title[:30]}...")
                     except Exception as e:
                         logger.warning(f"Error checking system details in section: {e}")
         except Exception as e:
@@ -864,6 +867,7 @@ class AmazonService:
         
         return False
     
+    @print_timing
     def _check_comparison_tables(self, product: Product, os_keyword: str) -> bool:
         """Check for operating system in product comparison tables
         
@@ -902,8 +906,12 @@ class AmazonService:
                                         
                                         # Check if OS contains the keyword
                                         if os_keyword.lower() in os_value.lower():
-                                            logger.info(f"Product is a {os_keyword.capitalize()} TV (from comparison table): {product.title[:30]}...")
+                                            logger.info(f"Product is a {os_keyword.capitalize()}  (from comparison table): {product.title[:30]}...")
                                             return True
+                                        else:
+                                            logger.info(f"Product is NOT a {os_keyword.capitalize()} (from comparison table): {product.title[:30]}...")
+                                    else:
+                                        logger.info(f"Empty or dash value found in comparison table for product: {product.title[:30]}...")
                             except Exception as e:
                                 logger.warning(f"Error reading OS value from span: {e}")
                     except Exception as e:
@@ -915,6 +923,7 @@ class AmazonService:
         
         return False
     
+    @print_timing
     def _check_specification_tables(self, product: Product, os_keyword: str) -> bool:
         """Check for operating system in specification tables
         
@@ -951,8 +960,10 @@ class AmazonService:
                                 
                                 # Check if OS contains the keyword
                                 if os_keyword.lower() in os_value.lower():
-                                    logger.info(f"Product is a {os_keyword.capitalize()} TV (from spec table): {product.title[:30]}...")
+                                    logger.info(f"Product is a {os_keyword.capitalize()}  (from spec table): {product.title[:30]}...")
                                     return True
+                                else:
+                                    logger.info(f"Product is NOT a {os_keyword.capitalize()}  (from spec table): {product.title[:30]}...")
                             except Exception as e:
                                 logger.warning(f"Error reading OS value from spec row: {e}")
                 except Exception as e:

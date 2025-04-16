@@ -57,3 +57,47 @@ class Product(BaseModel):
                 except:
                     pass
         return v
+    
+
+class CustomerSentiment(BaseModel):
+    """Model for AI-generated customer sentiment about a product"""
+    summary: str = Field(default="N/A")
+    positive_aspects: List[Review] = Field(default_factory=list)
+    negative_aspects: List[Review] = Field(default_factory=list)
+    mixed_aspects: List[Review] = Field(default_factory=list)
+    
+    @field_validator('positive_aspects', 'negative_aspects', 'mixed_aspects', mode='before')
+    def ensure_list(cls, v):
+        """Ensure the value is a list"""
+        if isinstance(v, str):
+            return [aspect.strip() for aspect in v.split(',')]
+        return v
+
+
+class FilteredProducts(Product):
+    """Model for filtered product information with technical specifications"""
+    brand_name: str = Field(default="N/A")
+    item_weight: str = Field(default="N/A")
+    product_dimensions: str = Field(default="N/A")
+    country_of_origin: str = Field(default="N/A")
+    item_model_number: str = Field(default="N/A")
+    color: str = Field(default="N/A")
+    special_features: List[str] = Field(default_factory=list)
+    screen_size: str = Field(default="N/A")
+    aspect_ratio: str = Field(default="N/A")
+    resolution: str = Field(default="N/A")
+    connectivity_technology: str = Field(default="N/A")
+    refresh_rate: str = Field(default="N/A")
+    display_technology: str = Field(default="N/A")
+    mounting_type: str = Field(default="N/A")
+    price: str = Field(default="N/A")
+    ratings_count: int = Field(default=0)
+    average_rating: float = Field(default=0.0)
+    customer_sentiment: Optional[CustomerSentiment] = None
+
+    @field_validator('special_features', mode='before')
+    def split_features(cls, v):
+        """Split comma-separated features into a list"""
+        if isinstance(v, str):
+            return [feature.strip() for feature in v.split(',')]
+        return v

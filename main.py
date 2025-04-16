@@ -8,6 +8,8 @@ from utils.driver_utils import setup_driver, random_delay
 from services.amazon_service import AmazonService
 from selenium import webdriver
 
+from utils.timing_utils import print_timing
+
 # Constants
 DEFAULT_SEARCH_TERM = "smart tvs"
 DEFAULT_OUTPUT_FILE = "amazon_smarttvs.csv"
@@ -41,7 +43,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--comments-in-last-n-days", type=int,
                       help="Number of days to consider for comments")
     return parser.parse_args()
-
+@print_timing
 def setup_environment(use_profile: bool) -> webdriver.Chrome:
     """Set up the WebDriver and environment"""
     if use_profile:
@@ -62,7 +64,7 @@ def load_products_from_csv(input_file: str) -> List[Dict[str, Any]]:
     
     logger.info(f"Loaded {len(products)} products from CSV")
     return products
-
+@print_timing
 def scrape_products(amazon_service: AmazonService, search_term: str, output_file: str) -> List[Dict[str, Any]]:
     """Scrape products from Amazon based on search term"""
     logger.info(f"Starting Amazon crawler with search term: '{search_term}'")
@@ -78,14 +80,14 @@ def scrape_products(amazon_service: AmazonService, search_term: str, output_file
     products = amazon_service.extract_product_data()
 
     #Filter out products based on operating system info
-    filtered_products = amazon_service.filter_products_by_os(products)
+    filtered_products = amazon_service.filter_products_by_os(products, "Roku")
     
     logger.info(f"Found {len(products)} products.")
     
     # Save data to CSV
-    amazon_service.save_to_csv(products, output_file)
+    amazon_service.save_to_csv(filtered_products, output_file)
     return products
-
+@print_timing
 def process_product_reviews(
     amazon_service: AmazonService, 
     products: List[Dict[str, Any]], 
@@ -126,7 +128,7 @@ def process_product_reviews(
         if i < min(max_products, len(products)) - 1:
             logger.info("Taking a short break before next product...")
             random_delay(3.0, 6.0)
-
+@print_timing
 def main() -> None:
     """Main function to run the Amazon crawler"""
     # Parse command line arguments
