@@ -216,7 +216,7 @@ class AmazonService:
             logger.error(f"Error finding product elements: {e}")
             return all_products
     
-    
+    @print_timing
     def visit_product_details(self, product_link: str) -> bool:
         """Navigate to a product detail page
         
@@ -790,8 +790,6 @@ class AmazonService:
                 continue
             
             try:
-                # Wait for page to load
-                random_delay(0.1, 1.0)
                 
                 is_matching_os: bool = False
                 

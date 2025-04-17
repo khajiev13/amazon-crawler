@@ -64,6 +64,7 @@ pip install -r requirements.txt
 | `--input-file`            | Input CSV file with product links (if already scraped)  | None             |
 | `--use-profile`           | Use your existing Chrome profile with saved logins      | False            |
 | `--comments-in-last-n-days`| Number of days to consider for comments                | None (all days)  |
+| `--fetch-reviews-from-file`| Path to CSV file containing ASINs to fetch reviews     | None             |
 
 ### Example Commands
 
@@ -82,6 +83,9 @@ python main.py --input-file existing_products.csv --reviews
 
 # Use existing Chrome profile and limit to recent reviews
 python main.py --search "Sony OLED" --reviews --use-profile --comments-in-last-n-days 30 (Not implemented propertly yet!)
+
+# Fetch reviews from a CSV file containing ASINs
+python main.py --fetch-reviews-from-file tv_links_asin.csv --max-products 10 --max-reviews 20
 ```
 
 ### Programmatic Usage

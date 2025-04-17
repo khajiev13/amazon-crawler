@@ -42,6 +42,8 @@ def parse_arguments() -> argparse.Namespace:
                       help="Use your existing Chrome profile with saved logins (default: False)")
     parser.add_argument("--comments-in-last-n-days", type=int,
                       help="Number of days to consider for comments")
+    parser.add_argument("--fetch-reviews-from-file", type=str,
+                      help="Fetch reviews from a CSV file containing ASINs")
     return parser.parse_args()
 @print_timing
 def setup_environment(use_profile: bool) -> webdriver.Chrome:
@@ -129,6 +131,75 @@ def process_product_reviews(
             logger.info("Taking a short break before next product...")
             random_delay(3.0, 6.0)
 @print_timing
+def process_reviews_from_csv_file(
+    amazon_service: AmazonService,
+    csv_file: str,
+    max_products: int,
+    max_reviews: Optional[int],
+    comments_in_last_n_days: Optional[int]
+) -> None:
+    """Process reviews for products listed in a CSV file containing ASINs
+    
+    Args:
+        amazon_service: AmazonService instance
+        csv_file: Path to CSV file containing ASINs
+        max_products: Maximum number of products to process
+        max_reviews: Maximum number of reviews to collect per product
+        comments_in_last_n_days: Number of days to consider for comments
+    """
+    try:
+        # Load CSV file
+        logger.info(f"Loading ASINs from CSV file: {csv_file}")
+        
+        products = []
+        with open(csv_file, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                # Check if the row has the required ASIN field
+                if 'ASIN' in row and row['ASIN']:
+                    product = {
+                        'asin': row['ASIN'],
+                        'title': f"Product model: {row.get('产品型号', 'N/A')} - Region: {row.get('站点', 'N/A')}"
+                    }
+                    products.append(product)
+        
+        if not products:
+            logger.error("No valid ASINs found in the CSV file")
+            return
+            
+        logger.info(f"Found {len(products)} valid ASINs in CSV file")
+        
+        # Create reviews directory if it doesn't exist
+        reviews_dir = Path(REVIEWS_DIR)
+        reviews_dir.mkdir(exist_ok=True)
+        
+        # Process each ASIN (limiting to max_products)
+        for i, product in enumerate(products[:max_products]):
+            logger.info(f"\nProcessing product {i+1}/{min(max_products, len(products))}")
+            logger.info(f"ASIN: {product['asin']} | {product['title']}")
+            
+            # Navigate to reviews using ASIN
+            if not amazon_service.navigate_to_reviews_by_asin(product['asin']):
+                logger.warning(f"Failed to navigate to reviews for ASIN {product['asin']}. Skipping.")
+                continue
+            
+            # Extract review data
+            reviews = amazon_service.extract_reviews(max_reviews, comments_in_last_n_days)
+            logger.info(f"Extracted {len(reviews)} reviews")
+            
+            # Save reviews to CSV
+            review_filename = reviews_dir / f"reviews_asin_{product['asin']}.csv"
+            amazon_service.save_reviews_to_csv(product['title'], reviews, str(review_filename))
+            
+            # Random delay between products
+            if i < min(max_products, len(products)) - 1:
+                logger.info("Taking a short break before next product...")
+                random_delay(3.0, 6.0)
+                
+    except Exception as e:
+        logger.exception(f"Error processing CSV file: {e}")
+        raise
+@print_timing
 def main() -> None:
     """Main function to run the Amazon crawler"""
     # Parse command line arguments
@@ -141,22 +212,32 @@ def main() -> None:
         # Initialize Amazon service
         amazon_service = AmazonService(driver)
         
-        # Either load existing products or scrape new ones
-        products = []
-        if args.input_file:
-            products = load_products_from_csv(args.input_file)
-        else:
-            products = scrape_products(amazon_service, args.search, args.output)
-        
-        # Process reviews if requested
-        if args.reviews:
-            process_product_reviews(
-                amazon_service, 
-                products, 
-                args.max_products, 
-                args.max_reviews, 
+        # Process reviews from CSV file if requested (exclusive path)
+        if args.fetch_reviews_from_file:
+            process_reviews_from_csv_file(
+                amazon_service,
+                args.fetch_reviews_from_file,
+                args.max_products,
+                args.max_reviews,
                 args.comments_in_last_n_days
             )
+        else:
+            # Only run product scraping if not fetching reviews from file
+            products = []
+            if args.input_file:
+                products = load_products_from_csv(args.input_file)
+            else:
+                products = scrape_products(amazon_service, args.search, args.output)
+            
+            # Process reviews if requested
+            if args.reviews:
+                process_product_reviews(
+                    amazon_service, 
+                    products, 
+                    args.max_products, 
+                    args.max_reviews, 
+                    args.comments_in_last_n_days
+                )
         
         logger.info("Crawling completed successfully!")
         
