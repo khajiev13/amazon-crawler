@@ -291,7 +291,7 @@ class AmazonService:
                                     )
                                     
                                     # Check if we need to login
-                                    if self.driver.find_elements(By.ID, "ap_email"):
+                                    if self._is_login_form_present():
                                         return self._handle_login()
                                     
                                     # If we're here, the reviews loaded without login
@@ -324,7 +324,7 @@ class AmazonService:
                     )
                     
                     # Check if we need to login
-                    if self.driver.find_elements(By.ID, "ap_email"):
+                    if self._is_login_form_present():
                         return self._handle_login()
                     
                     # If we're here, the reviews loaded without login
@@ -341,27 +341,27 @@ class AmazonService:
             
     def navigate_to_reviews_by_asin(self, asin: str, page: int = 1) -> bool:
         """Navigate directly to a product's reviews page using its ASIN and page number
-        
+    
         Args:
             asin: Amazon Standard Identification Number
             page: Page number of reviews (default: 1)
-            
+    
         Returns:
             bool: True if successfully navigated to reviews
         """
-        try:
-            # Construct direct URL to reviews page with sorting and pagination
-            reviews_url = f"https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}"
-            logger.info(f"Navigating directly to reviews page {page} using ASIN: {asin}")
+        review_url_templates = [
+            "https://www.amazon.com/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}",
+            "https://www.amazon.de/-/en/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}",
+            "https://www.amazon.co.uk/product-reviews/{asin}/ref=cm_cr_arp_d_viewopt_srt?ie=UTF8&reviewerType=all_reviews&sortBy=recent&pageNumber={page}",
+        ]
+        for url_template in review_url_templates:
+            reviews_url = url_template.format(asin=asin, page=page)
+            logger.info(f"Trying reviews URL: {reviews_url}")
             self.driver.get(reviews_url)
             random_delay(2.0, 4.0)
-            
-            # Handle any security challenges that might appear
             if handle_security_challenges(self.driver):
                 logger.info("Security challenge handled on reviews page, continuing...")
                 random_delay(1.0, 2.0)
-                
-            # Wait for either reviews page or login form
             try:
                 WebDriverWait(self.driver, 10).until(
                     EC.any_of(
@@ -369,21 +369,15 @@ class AmazonService:
                         EC.presence_of_element_located((By.ID, "ap_email"))
                     )
                 )
-                
-                # Check if we need to login
-                if self.driver.find_elements(By.ID, "ap_email"):
+                if self._is_login_form_present():
                     return self._handle_login()
-                
-                # If we're here, the reviews loaded without login
+                logger.info(f"Successfully loaded reviews from: {reviews_url}")
                 return True
-                
             except TimeoutException:
-                logger.warning("Neither reviews nor login form found after navigation")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error navigating to reviews by ASIN: {e}")
-            return False
+                logger.warning(f"Reviews not found at {reviews_url}")
+                continue
+        logger.warning("Could not load reviews from any regional URL.")
+        return False
             
     def extract_reviews(self, max_reviews: int = None, comments_in_last_n_days:int = None) -> List[Review]:
         """Extract review data from all review pages
@@ -401,6 +395,10 @@ class AmazonService:
             logger.info("Extracting review data from all pages...")
             while True:
                 logger.info(f"Processing review page {current_page}...")
+                
+                # Try to translate reviews to English if available
+                self._translate_reviews_to_english()
+                
                 # Look for review elements with multiple selector options
                 review_selectors = [
                     "li[data-hook='review'][role='listitem']",
@@ -682,13 +680,13 @@ class AmazonService:
         
         logger.info(f"Reviews saved to {product_filename}")
 
-    def _handle_login(self, email="raxmon1710@gmail.com", password="7191710r") -> bool:
+    def _handle_login(self, email="raxmon1710@gmail.com", password="Forexuzb8080") -> bool:
         """Handle Amazon login process when prompted
-        
+    
         Args:
             email: Amazon account email
             password: Amazon account password
-            
+    
         Returns:
             bool: True if login successful and reviews loaded
         """
@@ -702,14 +700,14 @@ class AmazonService:
             for char in email:
                 email_field.send_keys(char)
                 random_delay(0.05, 0.15)
-            
+    
             # Click continue after entering email
             continue_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.ID, "continue"))
             )
             random_delay(0.5, 1.0)
             continue_button.click()
-            
+    
             # Enter password
             password_field = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "ap_password"))
@@ -717,20 +715,50 @@ class AmazonService:
             for char in password:
                 password_field.send_keys(char)
                 random_delay(0.05, 0.15)
-            
+    
             # Click sign-in
             signin_button = WebDriverWait(self.driver, 10).until(
                 EC.element_to_be_clickable((By.ID, "signInSubmit"))
             )
-            random_delay(0.5, 1.0)
+            random_delay(10, 14.0)
             signin_button.click()
-            
-            # Wait for reviews to load after login
-            WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.ID, "cm_cr-review_list"))
-            )
-            logger.info("Successfully logged in and loaded reviews")
-            return True
+    
+            # Wait for one of several possible outcomes
+            try:
+                WebDriverWait(self.driver, 20).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.ID, "cm_cr-review_list")),  # Success
+                        EC.presence_of_element_located((By.ID, "auth-error-message-box")),  # Login error
+                        EC.presence_of_element_located((By.ID, "ap_captcha_img")),  # Captcha
+                        EC.presence_of_element_located((By.ID, "auth-mfa-otpcode")),  # MFA
+                        EC.presence_of_element_located((By.ID, "cvf-page-content"))  # Additional verification
+                    )
+                )
+            except TimeoutException:
+                logger.error("Timed out waiting for login result or additional verification.")
+                return False
+    
+            # Check for successful login
+            if self.driver.find_elements(By.ID, "cm_cr-review_list"):
+                logger.info("Successfully logged in and loaded reviews")
+                return True
+    
+            # Check for login error
+            if self.driver.find_elements(By.ID, "auth-error-message-box"):
+                logger.error("Login failed: Incorrect credentials or Amazon blocked login.")
+                return False
+    
+            # Check for captcha or additional verification
+            if self.driver.find_elements(By.ID, "ap_captcha_img"):
+                logger.error("Amazon presented a CAPTCHA. Manual intervention required.")
+                return False
+            if self.driver.find_elements(By.ID, "auth-mfa-otpcode") or self.driver.find_elements(By.ID, "cvf-page-content"):
+                logger.error("Amazon requires additional verification (MFA/OTP). Manual intervention required.")
+                return False
+    
+            logger.error("Unknown login outcome. Could not proceed.")
+            return False
+    
         except Exception as e:
             logger.error(f"Error during login process: {e}")
             return False
@@ -970,3 +998,70 @@ class AmazonService:
             logger.warning(f"Error checking spec tables for OS: {e}")
         
         return False
+
+    def _translate_reviews_to_english(self) -> bool:
+        """Find and click the translate button to translate reviews to English
+        
+        Returns:
+            bool: True if translate button was found and clicked, False otherwise
+        """
+        logger.info("Checking for 'Translate all reviews to English' button...")
+        try:
+            # First try by ID which is faster
+            translate_buttons = self.driver.find_elements(By.ID, "a-autoid-21-announce")
+            
+            # Fallback to data-hook if ID doesn't work or isn't found
+            if not translate_buttons:
+                translate_buttons = self.driver.find_elements(
+                    By.CSS_SELECTOR, 
+                    "a[data-hook='cr-translate-these-reviews-link']"
+                )
+            
+            if not translate_buttons:
+                logger.info("No translate button found on this page.")
+                return False
+                
+            translate_button = translate_buttons[0]
+            logger.info("Found 'Translate all reviews to English' button. Preparing to click...")
+            
+            # Scroll to the button
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
+                translate_button
+            )
+            random_delay(0.5, 1.0)
+            
+            # Hover before clicking
+            actions = ActionChains(self.driver)
+            actions.move_to_element(translate_button).pause(0.3).perform()
+            
+            # Click the translate button
+            translate_button.click()
+            logger.info("Clicked the translate button.")
+            
+            # Wait for translation to complete
+            random_delay(2.0, 4.0)
+            
+            # Wait for review list to be present again after potential reload
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, "cm_cr-review_list"))
+            )
+            logger.info("Review list confirmed present after translation attempt.")
+            return True
+            
+        except ElementNotInteractableException:
+            logger.warning("Translate button found but was not interactable.")
+            return False
+        except Exception as e:
+            logger.warning(f"Error checking for or clicking translate button: {e}")
+            return False
+        
+    def _is_login_form_present(self, timeout=5) -> bool:
+        """Check if the Amazon login form is visible."""
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.visibility_of_element_located((By.ID, "ap_email"))
+            )
+            return True
+        except TimeoutException:
+            return False
